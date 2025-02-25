@@ -57,7 +57,7 @@ function getNavigation($current_page, $user_role) {
     foreach ($nav_items as $key => $item) {
         if (in_array($user_role, $item['roles'])) {
             $active_class = ($current_page === $key) ? 'bg-indigo-50 border-indigo-500 text-indigo-700' : 'border-transparent text-gray-500 hover:bg-gray-50 hover:border-gray-300 hover:text-gray-700';
-            $output .= '<a href="' . $item['url'] . '" class="' . $active_class . ' block pl-3 pr-4 py-2 border-l-4 text-base font-medium">' . $item['title'] . '</a>';
+            $output .= '<a href="' . $item['url'] . '" class="' . $active_class . ' block pl-3 pr-4 py-2 border-l-4 text-base -medium">' . $item['title'] . '</a>';
         }
     }
 

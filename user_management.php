@@ -17,59 +17,243 @@ $stmt->close();
 $is_admin = ($current_user['role'] === 'admin');
 
 if (!$is_admin) {
-    // Redirect non-admin users to the dashboard
     header("Location: dashboard.php");
     exit();
 }
 
+$message = '';
+$message_type = '';
+
 // Handle form submissions
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $is_admin) {
     if (isset($_POST['action'])) {
-        switch ($_POST['action']) {
-            case 'create_user':
-                // Create user logic
-                $full_name = $_POST['full_name'];
-                $email = $_POST['email'];
-                $password = password_hash($_POST['password'], PASSWORD_DEFAULT);
-                $role = $_POST['role'];
-                
-                $stmt = $conn->prepare("INSERT INTO users (full_name, email, password, role) VALUES (?, ?, ?, ?)");
-                $stmt->bind_param("ssss", $full_name, $email, $password, $role);
-                $stmt->execute();
-                $stmt->close();
-                break;
-            case 'edit_user':
-                // Edit user logic
-                $user_id = $_POST['user_id'];
-                $full_name = $_POST['full_name'];
-                $email = $_POST['email'];
-                $role = $_POST['role'];
-                
-                $stmt = $conn->prepare("UPDATE users SET full_name = ?, email = ?, role = ? WHERE id = ?");
-                $stmt->bind_param("sssi", $full_name, $email, $role, $user_id);
-                $stmt->execute();
-                $stmt->close();
-                break;
-            case 'delete_user':
-                // Delete user logic
-                $user_id = $_POST['user_id'];
-                
-                $stmt = $conn->prepare("DELETE FROM users WHERE id = ?");
-                $stmt->bind_param("i", $user_id);
-                $stmt->execute();
-                $stmt->close();
-                break;
+        try {
+            switch ($_POST['action']) {
+                case 'create_user':
+                    // Validate input
+                    $full_name = trim($_POST['full_name']);
+                    $email = filter_var(trim($_POST['email']), FILTER_VALIDATE_EMAIL);
+                    $password = $_POST['password'];
+                    $role = $_POST['role'];
+                    
+                    if (!$email) {
+                        throw new Exception("Invalid email address");
+                    }
+                    
+                    if (strlen($password) < 8) {
+                        throw new Exception("Password must be at least 8 characters long");
+                    }
+                    
+                    if (!in_array($role, ['admin', 'accountant', 'client'])) {
+                        throw new Exception("Invalid role selected");
+                    }
+                    
+                    // Check if email already exists
+                    $stmt = $conn->prepare("SELECT id FROM users WHERE email = ?");
+                    $stmt->bind_param("s", $email);
+                    $stmt->execute();
+                    if ($stmt->get_result()->num_rows > 0) {
+                        throw new Exception("A user with this email already exists");
+                    }
+                    $stmt->close();
+                    
+                    // Create user
+                    $hashed_password = password_hash($password, PASSWORD_DEFAULT);
+                    $stmt = $conn->prepare("INSERT INTO users (full_name, email, password, role) VALUES (?, ?, ?, ?)");
+                    $stmt->bind_param("ssss", $full_name, $email, $hashed_password, $role);
+                    
+                    if ($stmt->execute()) {
+                        $new_user_id = $conn->insert_id;
+                        
+                        // Log the action
+                        $action = "Created new user: $full_name ($role)";
+                        $stmt = $conn->prepare("INSERT INTO activity_logs (user_id, action, created_at) VALUES (?, ?, NOW())");
+                        $stmt->bind_param("is", $user_id, $action);
+                        $stmt->execute();
+                        
+                        // Send welcome email
+                        $to = $email;
+                        $subject = "Welcome to " . COMPANY_NAME;
+                        $message = "Hello $full_name,\n\nYour account has been created successfully.\n\nLogin Email: $email\nTemporary Password: $password\n\nPlease change your password after first login.\n\nBest regards,\n" . COMPANY_NAME;
+                        $headers = "From: " . COMPANY_EMAIL;
+                        
+                        mail($to, $subject, $message, $headers);
+                        
+                        $message = "User created successfully";
+                        $message_type = "success";
+                    } else {
+                        throw new Exception("Failed to create user");
+                    }
+                    $stmt->close();
+                    break;
+
+                case 'update_user':
+                    $user_id_to_update = filter_var($_POST['user_id'], FILTER_VALIDATE_INT);
+                    $full_name = trim($_POST['full_name']);
+                    $email = filter_var(trim($_POST['email']), FILTER_VALIDATE_EMAIL);
+                    $role = $_POST['role'];
+                    $status = $_POST['status'];
+                    
+                    if (!$user_id_to_update) {
+                        throw new Exception("Invalid user ID");
+                    }
+                    
+                    if (!$email) {
+                        throw new Exception("Invalid email address");
+                    }
+                    
+                    // Check if email exists for other users
+                    $stmt = $conn->prepare("SELECT id FROM users WHERE email = ? AND id != ?");
+                    $stmt->bind_param("si", $email, $user_id_to_update);
+                    $stmt->execute();
+                    if ($stmt->get_result()->num_rows > 0) {
+                        throw new Exception("Another user with this email already exists");
+                    }
+                    $stmt->close();
+                    
+                    // Update user
+                    $stmt = $conn->prepare("UPDATE users SET full_name = ?, email = ?, role = ?, status = ? WHERE id = ?");
+                    $stmt->bind_param("ssssi", $full_name, $email, $role, $status, $user_id_to_update);
+                    
+                    if ($stmt->execute()) {
+                        // Log the action
+                        $action = "Updated user: $full_name ($role)";
+                        $stmt = $conn->prepare("INSERT INTO activity_logs (user_id, action, created_at) VALUES (?, ?, NOW())");
+                        $stmt->bind_param("is", $user_id, $action);
+                        $stmt->execute();
+                        
+                        $message = "User updated successfully";
+                        $message_type = "success";
+                    } else {
+                        throw new Exception("Failed to update user");
+                    }
+                    $stmt->close();
+                    break;
+
+                case 'delete_user':
+                    $user_id_to_delete = filter_var($_POST['user_id'], FILTER_VALIDATE_INT);
+                    
+                    if (!$user_id_to_delete) {
+                        throw new Exception("Invalid user ID");
+                    }
+                    
+                    // Check if user exists and get their info for logging
+                    $stmt = $conn->prepare("SELECT full_name, role FROM users WHERE id = ?");
+                    $stmt->bind_param("i", $user_id_to_delete);
+                    $stmt->execute();
+                    $user_info = $stmt->get_result()->fetch_assoc();
+                    $stmt->close();
+                    
+                    if (!$user_info) {
+                        throw new Exception("User not found");
+                    }
+                    
+                    // Delete user
+                    $stmt = $conn->prepare("DELETE FROM users WHERE id = ?");
+                    $stmt->bind_param("i", $user_id_to_delete);
+                    
+                    if ($stmt->execute()) {
+                        // Log the action
+                        $action = "Deleted user: {$user_info['full_name']} ({$user_info['role']})";
+                        $stmt = $conn->prepare("INSERT INTO activity_logs (user_id, action, created_at) VALUES (?, ?, NOW())");
+                        $stmt->bind_param("is", $user_id, $action);
+                        $stmt->execute();
+                        
+                        $message = "User deleted successfully";
+                        $message_type = "success";
+                    } else {
+                        throw new Exception("Failed to delete user");
+                    }
+                    $stmt->close();
+                    break;
+
+                case 'reset_password':
+                    $user_id_to_reset = filter_var($_POST['user_id'], FILTER_VALIDATE_INT);
+                    
+                    if (!$user_id_to_reset) {
+                        throw new Exception("Invalid user ID");
+                    }
+                    
+                    // Generate temporary password
+                    $temp_password = bin2hex(random_bytes(8));
+                    $hashed_password = password_hash($temp_password, PASSWORD_DEFAULT);
+                    
+                    // Update password
+                    $stmt = $conn->prepare("UPDATE users SET password = ?, password_reset_required = 1 WHERE id = ?");
+                    $stmt->bind_param("si", $hashed_password, $user_id_to_reset);
+                    
+                    if ($stmt->execute()) {
+                        // Get user email
+                        $stmt = $conn->prepare("SELECT email, full_name FROM users WHERE id = ?");
+                        $stmt->bind_param("i", $user_id_to_reset);
+                        $stmt->execute();
+                        $user_info = $stmt->get_result()->fetch_assoc();
+                        
+                        // Send password reset email
+                        $to = $user_info['email'];
+                        $subject = "Password Reset - " . COMPANY_NAME;
+                        $message = "Hello {$user_info['full_name']},\n\nYour password has been reset.\n\nTemporary Password: $temp_password\n\nPlease change your password after logging in.\n\nBest regards,\n" . COMPANY_NAME;
+                        $headers = "From: " . COMPANY_EMAIL;
+                        
+                        mail($to, $subject, $message, $headers);
+                        
+                        // Log the action
+                        $action = "Reset password for user: {$user_info['full_name']}";
+                        $stmt = $conn->prepare("INSERT INTO activity_logs (user_id, action, created_at) VALUES (?, ?, NOW())");
+                        $stmt->bind_param("is", $user_id, $action);
+                        $stmt->execute();
+                        
+                        $message = "Password reset successfully. A temporary password has been sent to the user's email.";
+                        $message_type = "success";
+                    } else {
+                        throw new Exception("Failed to reset password");
+                    }
+                    $stmt->close();
+                    break;
+            }
+        } catch (Exception $e) {
+            $message = $e->getMessage();
+            $message_type = "error";
         }
     }
 }
 
-// Fetch all users
-$stmt = $conn->prepare("SELECT id, full_name, email, role FROM users");
+// Fetch users with pagination
+$page = isset($_GET['page']) ? max(1, intval($_GET['page'])) : 1;
+$per_page = 10;
+$offset = ($page - 1) * $per_page;
+
+// Get total count
+$total_users = $conn->query("SELECT COUNT(*) as count FROM users")->fetch_assoc()['count'];
+$total_pages = ceil($total_users / $per_page);
+
+// Fetch users for current page
+$stmt = $conn->prepare("
+    SELECT u.*, 
+           COUNT(al.id) as activity_count,
+           MAX(al.created_at) as last_activity
+    FROM users u
+    LEFT JOIN activity_logs al ON u.id = al.user_id
+    GROUP BY u.id
+    ORDER BY u.created_at DESC
+    LIMIT ? OFFSET ?
+");
+$stmt->bind_param("ii", $per_page, $offset);
 $stmt->execute();
-$result = $stmt->get_result();
-$users = $result->fetch_all(MYSQLI_ASSOC);
+$users = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
 $stmt->close();
 
+// Fetch recent activity logs
+$stmt = $conn->prepare("
+    SELECT al.*, u.full_name
+    FROM activity_logs al
+    JOIN users u ON al.user_id = u.id
+    ORDER BY al.created_at DESC
+    LIMIT 10
+");
+$stmt->execute();
+$recent_activities = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+$stmt->close();
 ?>
 
 <!DOCTYPE html>
@@ -92,100 +276,335 @@ $stmt->close();
 
         <main class="flex-1 overflow-y-auto">
             <div class="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
-                <h1 class="text-2xl font-semibold text-gray-900 mb-6">User Management</h1>
-
-                <?php if ($is_admin): ?>
-                    <div class="mb-6">
-                        <h2 class="text-xl font-semibold text-gray-900 mb-2">Create New User</h2>
-                        <form action="" method="POST" class="space-y-4">
-                            <input type="hidden" name="action" value="create_user">
-                            <div>
-                                <label for="full_name" class="block text-sm font-medium text-gray-700">Full Name</label>
-                                <input type="text" name="full_name" id="full_name" required class="mt-1 focus:ring-indigo-500 focus:border-indigo-500 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md">
-                            </div>
-                            <div>
-                                <label for="email" class="block text-sm font-medium text-gray-700">Email</label>
-                                <input type="email" name="email" id="email" required class="mt-1 focus:ring-indigo-500 focus:border-indigo-500 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md">
-                            </div>
-                            <div>
-                                <label for="password" class="block text-sm font-medium text-gray-700">Password</label>
-                                <input type="password" name="password" id="password" required class="mt-1 focus:ring-indigo-500 focus:border-indigo-500 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md">
-                            </div>
-                            <div>
-                                <label for="role" class="block text-sm font-medium text-gray-700">Role</label>
-                                <select name="role" id="role" required class="mt-1 block w-full py-2 px-3 border border-gray-300 bg-white rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
-                                    <option value="admin">Admin</option>
-                                    <option value="accountant">Accountant</option>
-                                    <option value="client">Client</option>
-                                </select>
-                            </div>
-                            <button type="submit" class="bg-indigo-600 text-white px-4 py-2 rounded">Create User</button>
-                        </form>
+                <div class="px-4 py-6 sm:px-0">
+                    <div class="flex justify-between items-center mb-6">
+                        <h1 class="text-2xl font-semibold text-gray-900">User Management</h1>
+                        <?php if ($is_admin): ?>
+                        <button onclick="showCreateUserModal()" class="bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                            Add New User
+                        </button>
+                        <?php endif; ?>
                     </div>
-                <?php endif; ?>
 
-                <div>
-                    <h2 class="text-xl font-semibold text-gray-900 mb-2">User List</h2>
-                    <div class="bg-white shadow overflow-hidden sm:rounded-lg">
-                        <table class="min-w-full divide-y divide-gray-200">
-                            <thead class="bg-gray-50">
-                                <tr>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Role</th>
-                                    <?php if ($is_admin): ?>
-                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
-                                    <?php endif; ?>
-                                </tr>
-                            </thead>
-                            <tbody class="bg-white divide-y divide-gray-200">
-                                <?php foreach ($users as $user): ?>
-                                    <tr>
-                                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900"><?php echo htmlspecialchars($user['full_name']); ?></td>
-                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500"><?php echo htmlspecialchars($user['email']); ?></td>
-                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500"><?php echo htmlspecialchars($user['role']); ?></td>
-                                        <?php if ($is_admin): ?>
-                                            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                                                <a href="#" class="text-indigo-600 hover:text-indigo-900" onclick="editUser(<?php echo $user['id']; ?>)">Edit</a>
-                                                <a href="#" class="text-red-600 hover:text-red-900 ml-4" onclick="deleteUser(<?php echo $user['id']; ?>)">Delete</a>
+                    <?php if ($message): ?>
+                    <div class="mb-4 p-4 rounded-md <?php echo $message_type === 'success' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'; ?>">
+                        <?php echo htmlspecialchars($message); ?>
+                    </div>
+                    <?php endif; ?>
+
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        <!-- User List -->
+                        <div class="lg:col-span-2">
+                            <div class="bg-white shadow overflow-hidden sm:rounded-lg">
+                                <table class="min-w-full divide-y divide-gray-200">
+                                    <thead class="bg-gray-50">
+                                        <tr>
+                                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">User</th>
+                                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Role</th>
+                                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Last Activity</th>
+                                            <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="bg-white divide-y divide-gray-200">
+                                        <?php foreach ($users as $user): ?>
+                                        <tr>
+                                            <td class="px-6 py-4 whitespace-nowrap">
+                                                <div class="flex items-center">
+                                                    <div class="flex-shrink-0 h-10 w-10">
+                                                        <span class="h-10 w-10 rounded-full bg-gray-100 flex items-center justify-center">
+                                                            <?php echo strtoupper(substr($user['full_name'], 0, 2)); ?>
+                                                        </span>
+                                                    </div>
+                                                    <div class="ml-4">
+                                                        <div class="text-sm font-medium text-gray-900">
+                                                            <?php echo htmlspecialchars($user['full_name']); ?>
+                                                        </div>
+                                                        <div class="text-sm text-gray-500">
+                                                            <?php echo htmlspecialchars($user['email']); ?>
+                                                        </div>
+                                                    </div>
+                                                </div>
                                             </td>
+                                            <td class="px-6 py-4 whitespace-nowrap">
+                                                <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full 
+                                                    <?php echo match($user['role']) {
+                                                        'admin' => 'bg-purple-100 text-purple-800',
+                                                        'accountant' => 'bg-blue-100 text-blue-800',
+                                                        'client' => 'bg-green-100 text-green-800',
+                                                        default => 'bg-gray-100 text-gray-800'
+                                                    }; ?>">
+                                                    <?php echo ucfirst($user['role']); ?>
+                                                </span>
+                                            </td>
+                                            <td class="px-6 py-4 whitespace-nowrap">
+                                                <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full 
+                                                    <?php echo $user['status'] === 'active' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'; ?>">
+                                                    <?php echo ucfirst($user['status']); ?>
+                                                </span>
+                                            </td>
+                                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                                <?php echo $user['last_activity'] ? date('M j, Y g:i A', strtotime($user['last_activity'])) : 'Never'; ?>
+                                            </td>
+                                            <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                                                <button onclick="editUser(<?php echo htmlspecialchars(json_encode($user)); ?>)"
+                                                    class="text-indigo-600 hover:text-indigo-900">Edit</button>
+                                                <button onclick="resetPassword(<?php echo $user['id']; ?>)"
+                                                    class="ml-4 text-yellow-600 hover:text-yellow-900">Reset Password</button>
+                                                <?php if ($user['id'] !== $current_user['id']): ?>
+                                                <button onclick="deleteUser(<?php echo $user['id']; ?>)"
+                                                    class="ml-4 text-red-600 hover:text-red-900">Delete</button>
+                                                <?php endif; ?>
+                                            </td>
+                                        </tr>
+                                        <?php endforeach; ?>
+                                    </tbody>
+                                </table>
+
+                                <!-- Pagination -->
+                                <?php if ($total_pages > 1): ?>
+                                <div class="bg-white px-4 py-3 flex items-center justify-between border-t border-gray-200 sm:px-6">
+                                    <div class="flex-1 flex justify-between sm:hidden">
+                                        <?php if ($page > 1): ?>
+                                        <a href="?page=<?php echo $page - 1; ?>" class="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">Previous</a>
                                         <?php endif; ?>
-                                    </tr>
-                                <?php endforeach; ?>
-                            </tbody>
-                        </table>
+                                        <?php if ($page < $total_pages): ?>
+                                        <a href="?page=<?php echo $page + 1; ?>" class="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">Next</a>
+                                        <?php endif; ?>
+                                    </div>
+                                    <div class="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
+                                        <div>
+                                            <p class="text-sm text-gray-700">
+                                                Showing <span class="font-medium"><?php echo $offset + 1; ?></span> to 
+                                                <span class="font-medium"><?php echo min($offset + $per_page, $total_users); ?></span> of
+                                                <span class="font-medium"><?php echo $total_users; ?></span> users
+                                            </p>
+                                        </div>
+                                        <div>
+                                            <nav class="relative z-0 inline-flex rounded-md shadow-sm -space-x-px" aria-label="Pagination">
+                                                <?php for ($i = 1; $i <= $total_pages; $i++): ?>
+                                                <a href="?page=<?php echo $i; ?>"
+                                                    class="relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50
+                                                        <?php echo $i === $page ? 'z-10 bg-indigo-50 border-indigo-500 text-indigo-600' : ''; ?>">
+                                                    <?php echo $i; ?>
+                                                </a>
+                                                <?php endfor; ?>
+                                            </nav>
+                                        </div>
+                                    </div>
+                                </div>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+
+                        <!-- Recent Activity -->
+                        <div class="lg:col-span-1">
+                            <div class="bg-white shadow overflow-hidden sm:rounded-lg">
+                                <div class="px-4 py-5 sm:px-6">
+                                    <h3 class="text-lg leading-6 font-medium text-gray-900">Recent Activity</h3>
+                                </div>
+                                <div class="border-t border-gray-200">
+                                    <ul class="divide-y divide-gray-200">
+                                        <?php foreach ($recent_activities as $activity): ?>
+                                        <li class="px-4 py-3">
+                                            <div class="text-sm text-gray-900"><?php echo htmlspecialchars($activity['action']); ?></div>
+                                            <div class="text-xs text-gray-500">
+                                                by <?php echo htmlspecialchars($activity['full_name']); ?> •
+                                                <?php echo date('M j, Y g:i A', strtotime($activity['created_at'])); ?>
+                                            </div>
+                                        </li>
+                                        <?php endforeach; ?>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
         </main>
     </div>
 
+    <!-- Create User Modal -->
+    <div id="createUserModal" class="fixed inset-0 bg-gray-500 bg-opacity-75 hidden">
+        <div class="flex min-h-full items-end justify-center p-4 text-center sm:items-center sm:p-0">
+            <div class="relative transform overflow-hidden rounded-lg bg-white px-4 pb-4 pt-5 text-left shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-lg sm:p-6">
+                <div>
+                    <h3 class="text-lg font-medium leading-6 text-gray-900">Create New User</h3>
+                    <form id="createUserForm" method="POST" class="mt-5">
+                        <input type="hidden" name="action" value="create_user">
+                        
+                        <div class="space-y-4">
+                            <div>
+                                <label for="full_name" class="block text-sm font-medium text-gray-700">Full Name</label>
+                                <input type="text" name="full_name" id="full_name" required
+                                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm">
+                            </div>
+
+                            <div>
+                                <label for="email" class="block text-sm font-medium text-gray-700">Email</label>
+                                <input type="email" name="email" id="email" required
+                                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm">
+                            </div>
+
+                            <div>
+                                <label for="password" class="block text-sm font-medium text-gray-700">Password</label>
+                                <input type="password" name="password" id="password" required minlength="8"
+                                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm">
+                            </div>
+
+                            <div>
+                                <label for="role" class="block text-sm font-medium text-gray-700">Role</label>
+                                <select name="role" id="role" required
+                                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm">
+                                    <option value="admin">Admin</option>
+                                    <option value="accountant">Accountant</option>
+                                    <option value="client">Client</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="mt-5 sm:mt-6 sm:grid sm:grid-flow-row-dense sm:grid-cols-2 sm:gap-3">
+                            <button type="submit"
+                                class="inline-flex w-full justify-center rounded-md border border-transparent bg-indigo-600 px-4 py-2 text-base font-medium text-white shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 sm:col-start-2 sm:text-sm">
+                                Create User
+                            </button>
+                            <button type="button" onclick="closeModal('createUserModal')"
+                                class="mt-3 inline-flex w-full justify-center rounded-md border border-gray-300 bg-white px-4 py-2 text-base font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 sm:col-start-1 sm:mt-0 sm:text-sm">
+                                Cancel
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit User Modal -->
+    <div id="editUserModal" class="fixed inset-0 bg-gray-500 bg-opacity-75 hidden">
+        <div class="flex min-h-full items-end justify-center p-4 text-center sm:items-center sm:p-0">
+            <div class="relative transform overflow-hidden rounded-lg bg-white px-4 pb-4 pt-5 text-left shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-lg sm:p-6">
+                <div>
+                    <h3 class="text-lg font-medium leading-6 text-gray-900">Edit User</h3>
+                    <form id="editUserForm" method="POST" class="mt-5">
+                        <input type="hidden" name="action" value="update_user">
+                        <input type="hidden" name="user_id" id="edit_user_id">
+                        
+                        <div class="space-y-4">
+                            <div>
+                                <label for="edit_full_name" class="block text-sm font-medium text-gray-700">Full Name</label>
+                                <input type="text" name="full_name" id="edit_full_name" required
+                                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm">
+                            </div>
+
+                            <div>
+                                <label for="edit_email" class="block text-sm font-medium text-gray-700">Email</label>
+                                <input type="email" name="email" id="edit_email" required
+                                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm">
+                            </div>
+
+                            <div>
+                                <label for="edit_role" class="block text-sm font-medium text-gray-700">Role</label>
+                                <select name="role" id="edit_role" required
+                                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm">
+                                    <option value="admin">Admin</option>
+                                    <option value="accountant">Accountant</option>
+                                    <option value="client">Client</option>
+                                </select>
+                            </div>
+
+                            <div>
+                                <label for="edit_status" class="block text-sm font-medium text-gray-700">Status</label>
+                                <select name="status" id="edit_status" required
+                                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm">
+                                    <option value="active">Active</option>
+                                    <option value="inactive">Inactive</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="mt-5 sm:mt-6 sm:grid sm:grid-flow-row-dense sm:grid-cols-2 sm:gap-3">
+                            <button type="submit"
+                                class="inline-flex w-full justify-center rounded-md border border-transparent bg-indigo-600 px-4 py-2 text-base font-medium text-white shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 sm:col-start-2 sm:text-sm">
+                                Save Changes
+                            </button>
+                            <button type="button" onclick="closeModal('editUserModal')"
+                                class="mt-3 inline-flex w-full justify-center rounded-md border border-gray-300 bg-white px-4 py-2 text-base font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 sm:col-start-1 sm:mt-0 sm:text-sm">
+                                Cancel
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script>
-        // Toggle mobile menu
-        const mobileMenuButton = document.getElementById('mobile-menu-button');
-        const mobileMenu = document.getElementById('mobile-menu');
+    function showCreateUserModal() {
+        document.getElementById('createUserModal').classList.remove('hidden');
+    }
 
-        mobileMenuButton.addEventListener('click', () => {
-            mobileMenu.classList.toggle('hidden');
-        });
+    function editUser(user) {
+        document.getElementById('edit_user_id').value = user.id;
+        document.getElementById('edit_full_name').value = user.full_name;
+        document.getElementById('edit_email').value = user.email;
+        document.getElementById('edit_role').value = user.role;
+        document.getElementById('edit_status').value = user.status;
+        document.getElementById('editUserModal').classList.remove('hidden');
+    }
 
-        function editUser(userId) {
-            // Implement edit user functionality
-            console.log('Edit user:', userId);
+    function closeModal(modalId) {
+        document.getElementById(modalId).classList.add('hidden');
+    }
+
+    function resetPassword(userId) {
+        if (confirm('Are you sure you want to reset this user\'s password? They will receive an email with their new temporary password.')) {
+            const form = document.createElement('form');
+            form.method = 'POST';
+            form.innerHTML = `
+                <input type="hidden" name="action" value="reset_password">
+                <input type="hidden" name="user_id" value="${userId}">
+            `;
+            document.body.appendChild(form);
+            form.submit();
         }
+    }
 
-        function deleteUser(userId) {
-            if (confirm('Are you sure you want to delete this user?')) {
-                const form = document.createElement('form');
-                form.method = 'POST';
-                form.innerHTML = `
-                    <input type="hidden" name="action" value="delete_user">
-                    <input type="hidden" name="user_id" value="${userId}">
-                `;
-                document.body.appendChild(form);
-                form.submit();
+    function deleteUser(userId) {
+        if (confirm('Are you sure you want to delete this user? This action cannot be undone.')) {
+            const form = document.createElement('form');
+            form.method = 'POST';
+            form.innerHTML = `
+                <input type="hidden" name="action" value="delete_user">
+                <input type="hidden" name="user_id" value="${userId}">
+            `;
+            document.body.appendChild(form);
+            form.submit();
+        }
+    }
+
+    // Close modals when clicking outside
+    window.onclick = function(event) {
+        const modals = document.getElementsByClassName('fixed inset-0');
+        for (let modal of modals) {
+            if (event.target === modal) {
+                modal.classList.add('hidden');
             }
         }
+    }
+
+    // Handle form submission messages
+    <?php if ($message): ?>
+    setTimeout(() => {
+        const messageDiv = document.querySelector('.bg-<?php echo $message_type === "success" ? "green" : "red"; ?>-50');
+        if (messageDiv) {
+            messageDiv.style.opacity = '0';
+            messageDiv.style.transition = 'opacity 0.5s ease-out';
+            setTimeout(() => messageDiv.remove(), 500);
+        }
+    }, 3000);
+    <?php endif; ?>
     </script>
+    <script src="assets/js/nav.js"></script>
 </body>
 </html>
+
