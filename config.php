@@ -71,7 +71,7 @@ function generateJWT($user_id) {
 
 function verifyJWT($token) {
     try {
-        $decoded = JWT::decode($token, JWT_SECRET, ['HS256']);
+        $decoded = Firebase\JWT\JWT::decode($token, new Firebase\JWT\Key(JWT_SECRET, 'HS256'));
         return $decoded->user_id;
     } catch (Exception $e) {
         return false;
