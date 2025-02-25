@@ -11,6 +11,8 @@ define('DB_HOST', 'localhost');
 define('DB_USER', 'root');
 define('DB_PASS', '');
 define('DB_NAME', 'invoice');
+define("COMPANY_NAME", "IBMS");
+define("COMPANY_EMAIL", "noreply@wheatchain.xyz");
 
 // JWT configuration
 define('JWT_SECRET', 'da2b760e930bf0145078c8475d73b3004108363dbe7e');

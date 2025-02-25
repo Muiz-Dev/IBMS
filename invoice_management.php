@@ -77,8 +77,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $can_manage_invoices) {
                     
                     // Create invoice
                     $invoice_number = generateInvoiceNumber();
-                    $stmt = $conn->prepare("INSERT INTO invoices (invoice_number, client_id, invoice_date, due_date, subtotal, tax_rate, tax_amount, total_amount, notes, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-                    $stmt->bind_param("sissddddss", $invoice_number, $client_id, $invoice_date, $due_date, $subtotal, $tax_rate, $tax_amount, $total_amount, $notes, $status);
+                    $amount = $total_amount; // Assign total amount to amount
+
+$stmt = $conn->prepare("INSERT INTO invoices (invoice_number, client_id, invoice_date, due_date, subtotal, tax_rate, tax_amount, total_amount, amount, notes, status, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+$stmt->bind_param("sissddddddsi", $invoice_number, $client_id, $invoice_date, $due_date, $subtotal, $tax_rate, $tax_amount, $total_amount, $amount, $notes, $status, $user_id);
                     
                     if (!$stmt->execute()) {
                         throw new Exception("Failed to create invoice");
@@ -201,16 +203,29 @@ $offset = ($page - 1) * $per_page;
 $total_invoices = $conn->query("SELECT COUNT(*) as count FROM invoices")->fetch_assoc()['count'];
 $total_pages = ceil($total_invoices / $per_page);
 
-// Fetch invoices for current page
+// Fetch invoices for current page with proper JOIN
 $stmt = $conn->prepare("
-    SELECT i.*, c.name as client_name 
+    SELECT i.*, c.name as client_name, 
+           CONCAT(u.full_name, ' (', u.role, ')') as created_by_name
     FROM invoices i 
-    JOIN clients c ON i.client_id = c.id 
+    LEFT JOIN clients c ON i.client_id = c.id 
+    LEFT JOIN users u ON i.created_by = u.id
     ORDER BY i.created_at DESC 
     LIMIT ? OFFSET ?
 ");
+
+if (!$stmt) {
+    error_log("Prepare failed: " . $conn->error);
+    die("Database error occurred");
+}
+
 $stmt->bind_param("ii", $per_page, $offset);
-$stmt->execute();
+
+if (!$stmt->execute()) {
+    error_log("Execute failed: " . $stmt->error);
+    die("Database error occurred");
+}
+
 $invoices = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
 $stmt->close();
 ?>
