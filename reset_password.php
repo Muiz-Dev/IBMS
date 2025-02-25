@@ -5,16 +5,19 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $token = $conn->real_escape_string($_POST['token']);
     $password = password_hash($_POST['password'], PASSWORD_DEFAULT);
 
-    $sql = "UPDATE users SET password = '$password', reset_token = NULL, reset_token_expires = NULL WHERE reset_token = '$token' AND reset_token_expires > NOW()";
+    $stmt = $conn->prepare("UPDATE users SET password = ?, reset_token = NULL, reset_token_expires = NULL WHERE reset_token = ? AND reset_token_expires > NOW()");
+    $stmt->bind_param("ss", $password, $token);
 
-    if ($conn->query($sql) === TRUE && $conn->affected_rows > 0) {
+    if ($stmt->execute() && $stmt->affected_rows > 0) {
         echo json_encode(['success' => true, 'message' => 'Password reset successful. You can now login with your new password.']);
     } else {
         echo json_encode(['success' => false, 'message' => 'Invalid or expired reset token.']);
     }
-} else {
-    $token = isset($_GET['token']) ? $_GET['token'] : '';
+    $stmt->close();
+    exit;
 }
+
+// ... (rest of the HTML code remains the same)
 ?>
 
 <!DOCTYPE html>

@@ -4,13 +4,15 @@ require_once 'config.php';
 if (isset($_GET['token'])) {
     $token = $conn->real_escape_string($_GET['token']);
     
-    $sql = "UPDATE users SET email_verified = 1, verification_token = NULL WHERE verification_token = '$token'";
+    $stmt = $conn->prepare("UPDATE users SET email_verified = 1, verification_token = NULL WHERE verification_token = ?");
+    $stmt->bind_param("s", $token);
     
-    if ($conn->query($sql) === TRUE && $conn->affected_rows > 0) {
-        echo "Email verified successfully. You can now <a href='index.php'>login</a>.";
+    if ($stmt->execute() && $stmt->affected_rows > 0) {
+        $message = "Email verified successfully. You can now <a href='index.php'>login</a>.";
     } else {
-        echo "Invalid or expired verification token.";
+        $message = "Invalid or expired verification token.";
     }
+    $stmt->close();
 } else {
-    echo "No verification token provided.";
+    $message = "No verification token provided.";
 }

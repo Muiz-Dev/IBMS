@@ -5,8 +5,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $email = $conn->real_escape_string($_POST['email']);
     $password = $_POST['password'];
 
-    $sql = "SELECT id, full_name, password, email_verified FROM users WHERE email = '$email'";
-    $result = $conn->query($sql);
+    $stmt = $conn->prepare("SELECT id, full_name, password, email_verified FROM users WHERE email = ?");
+    $stmt->bind_param("s", $email);
+    $stmt->execute();
+    $result = $stmt->get_result();
 
     if ($result->num_rows > 0) {
         $user = $result->fetch_assoc();
@@ -24,4 +26,5 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     } else {
         echo json_encode(['success' => false, 'message' => 'User not found']);
     }
+    $stmt->close();
 }

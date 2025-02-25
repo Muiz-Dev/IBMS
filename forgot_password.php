@@ -4,11 +4,13 @@ require_once 'config.php';
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $email = $conn->real_escape_string($_POST['email']);
     $reset_token = bin2hex(random_bytes(16));
+    $reset_token_expires = date('Y-m-d H:i:s', strtotime('+1 hour'));
     
-    $sql = "UPDATE users SET reset_token = '$reset_token', reset_token_expires = DATE_ADD(NOW(), INTERVAL 1 HOUR) WHERE email = '$email'";
+    $stmt = $conn->prepare("UPDATE users SET reset_token = ?, reset_token_expires = ? WHERE email = ?");
+    $stmt->bind_param("sss", $reset_token, $reset_token_expires, $email);
     
-    if ($conn->query($sql) === TRUE) {
-        $reset_link = "http://localhost/reset_password.php?token=$reset_token";
+    if ($stmt->execute()) {
+        $reset_link = "http://yourdomain.com/reset_password.php?token=$reset_token";
         $subject = "Reset Your Password";
         $body = "Click the following link to reset your password: $reset_link";
         
@@ -18,10 +20,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             echo json_encode(['success' => false, 'message' => 'Failed to send password reset email. Please try again.']);
         }
     } else {
-        echo json_encode(['success' => false, 'message' => 'Error: ' . $conn->error]);
+        echo json_encode(['success' => false, 'message' => 'Error: ' . $stmt->error]);
     }
+    $stmt->close();
     exit;
 }
+
+// ... (rest of the HTML code remains the same)
 ?>
 
 <!DOCTYPE html>

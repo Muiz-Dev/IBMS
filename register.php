@@ -7,10 +7,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $password = password_hash($_POST['password'], PASSWORD_DEFAULT);
     $verification_token = bin2hex(random_bytes(16));
 
-    $sql = "INSERT INTO users (full_name, email, password, verification_token) VALUES ('$full_name', '$email', '$password', '$verification_token')";
+    $stmt = $conn->prepare("INSERT INTO users (full_name, email, password, verification_token) VALUES (?, ?, ?, ?)");
+    $stmt->bind_param("ssss", $full_name, $email, $password, $verification_token);
     
-    if ($conn->query($sql) === TRUE) {
-        $verification_link = "http://localhost/verify.php?token=$verification_token";
+    if ($stmt->execute()) {
+        $verification_link = "http://localhost.com/verify.php?token=$verification_token";
         $subject = "Verify Your Email";
         $body = "Click the following link to verify your email: $verification_link";
         
@@ -20,6 +21,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             echo json_encode(['success' => false, 'message' => 'Registration successful, but failed to send verification email. Please contact support.']);
         }
     } else {
-        echo json_encode(['success' => false, 'message' => 'Error: ' . $conn->error]);
+        echo json_encode(['success' => false, 'message' => 'Error: ' . $stmt->error]);
     }
+    $stmt->close();
 }

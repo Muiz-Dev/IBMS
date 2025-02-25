@@ -17,12 +17,12 @@ define('JWT_SECRET', 'da2b760e930bf0145078c8475d73b3004108363dbe7e');
 define('JWT_EXPIRATION', 3600); // 1 hour
 
 // SMTP configuration
-define('SMTP_HOST', 'your_smtp_host');
-define('SMTP_PORT', 587);
-define('SMTP_USER', 'your_smtp_username');
-define('SMTP_PASS', 'your_smtp_password');
-define('SMTP_FROM', 'noreply@yourdomain.com');
-define('SMTP_FROM_NAME', 'Your Company Name');
+define('SMTP_HOST', 'mail.wheatchain.xyz');
+define('SMTP_PORT', 465);
+define('SMTP_USER', 'info@wheatchain.xyz');
+define('SMTP_PASS', 'tjF#Vz6B.mUI');
+define('SMTP_FROM', 'noreply@wheatchain.xyz');
+define('SMTP_FROM_NAME', 'IBMS');
 
 $conn = new mysqli(DB_HOST, DB_USER, DB_PASS, DB_NAME);
 
