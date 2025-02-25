@@ -5,12 +5,20 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $full_name = $conn->real_escape_string($_POST['full_name']);
     $email = $conn->real_escape_string($_POST['email']);
     $password = password_hash($_POST['password'], PASSWORD_DEFAULT);
-    $role = 'client'; // Default role
+    $verification_token = bin2hex(random_bytes(16));
 
-    $sql = "INSERT INTO users (full_name, email, password, role) VALUES ('$full_name', '$email', '$password', '$role')";
+    $sql = "INSERT INTO users (full_name, email, password, verification_token) VALUES ('$full_name', '$email', '$password', '$verification_token')";
     
     if ($conn->query($sql) === TRUE) {
-        echo json_encode(['success' => true, 'message' => 'User registered successfully']);
+        $verification_link = "http://localhost/verify.php?token=$verification_token";
+        $subject = "Verify Your Email";
+        $body = "Click the following link to verify your email: $verification_link";
+        
+        if (sendEmail($email, $subject, $body)) {
+            echo json_encode(['success' => true, 'message' => 'Registration successful. Please check your email to verify your account.']);
+        } else {
+            echo json_encode(['success' => false, 'message' => 'Registration successful, but failed to send verification email. Please contact support.']);
+        }
     } else {
         echo json_encode(['success' => false, 'message' => 'Error: ' . $conn->error]);
     }
