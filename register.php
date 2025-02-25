@@ -11,7 +11,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $stmt->bind_param("ssss", $full_name, $email, $password, $verification_token);
     
     if ($stmt->execute()) {
-        $verification_link = "http://localhost.com/verify.php?token=$verification_token";
+        $verification_link = "http://localhost:8001/verify.php?token=$verification_token";
         $subject = "Verify Your Email";
         $body = "Click the following link to verify your email: $verification_link";
         
