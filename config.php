@@ -18,7 +18,7 @@ define('JWT_EXPIRATION', 3600); // 1 hour
 
 // SMTP configuration
 define('SMTP_HOST', 'mtl101.truehost.cloud');
-define('SMTP_PORT', 587);
+define('SMTP_PORT', 465);
 define('SMTP_USER', 'test@wheatchain.xyz');
 define('SMTP_PASS', 'EL2W7FZsJQG4uYV');
 define('SMTP_FROM', 'noreply@wheatchain.xyz');
@@ -39,8 +39,8 @@ function sendEmail($to, $subject, $body) {
         $mail->SMTPAuth   = true;
         $mail->Username   = SMTP_USER;
         $mail->Password   = SMTP_PASS;
-        $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
-       $mail->Port       = 587;
+        $mail->SMTPSecure = PHPMailer::ENCRYPTION_SMTPS;
+$mail->Port       = 465;
         $mail->setFrom(SMTP_FROM, SMTP_FROM_NAME);
         $mail->addAddress($to);
 
