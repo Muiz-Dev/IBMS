@@ -168,6 +168,42 @@ if (isset($_SESSION['user_id'])) {
                     </button>
                 </div>
             </form>
+
+            <!-- Resend Verification Form (Hidden by default) -->
+            <form id="resendVerificationForm" class="mt-8 space-y-6 hidden" action="login.php" method="POST">
+                <input type="hidden" name="action" value="resend_verification">
+                <input type="hidden" id="resend-email" name="email">
+                
+                <div class="bg-yellow-50 border-l-4 border-yellow-400 p-4 mb-4">
+                    <div class="flex">
+                        <div class="flex-shrink-0">
+                            <svg class="h-5 w-5 text-yellow-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
+                            </svg>
+                        </div>
+                        <div class="ml-3">
+                            <p class="text-sm text-yellow-700" id="verification-message">
+                                Your email is not verified. Please check your inbox for the verification link or click below to resend it.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                <div>
+                    <button type="submit" 
+                        class="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium 
+                        rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 
+                        focus:ring-offset-2 focus:ring-blue-500 transition-colors duration-200">
+                        Resend Verification Email
+                    </button>
+                </div>
+                
+                <div class="text-center mt-4">
+                    <button type="button" id="backToLoginBtn" class="text-sm text-blue-600 hover:text-blue-500">
+                        Back to Login
+                    </button>
+                </div>
+            </form>
         </div>
     </div>
 
@@ -193,6 +229,8 @@ if (isset($_SESSION['user_id'])) {
         const registerTab = document.getElementById('registerTab');
         const loginForm = document.getElementById('loginForm');
         const registerForm = document.getElementById('registerForm');
+        const resendVerificationForm = document.getElementById('resendVerificationForm');
+        const backToLoginBtn = document.getElementById('backToLoginBtn');
         const alert = document.getElementById('alert');
         const alertMessage = document.getElementById('alertMessage');
         const alertIcon = document.getElementById('alertIcon');
@@ -204,6 +242,7 @@ if (isset($_SESSION['user_id'])) {
         function switchTab(activeTab, activeForm, inactiveTab, inactiveForm) {
             activeForm.classList.remove('hidden');
             inactiveForm.classList.add('hidden');
+            resendVerificationForm.classList.add('hidden');
             
             activeTab.classList.add('text-blue-600', 'border-blue-600');
             inactiveTab.classList.remove('text-blue-600', 'border-blue-600');
@@ -217,6 +256,13 @@ if (isset($_SESSION['user_id'])) {
 
         registerTab.addEventListener('click', () => 
             switchTab(registerTab, registerForm, loginTab, loginForm));
+            
+        backToLoginBtn.addEventListener('click', () => {
+            resendVerificationForm.classList.add('hidden');
+            loginForm.classList.remove('hidden');
+            loginTab.classList.add('text-blue-600', 'border-blue-600');
+            registerTab.classList.remove('text-blue-600', 'border-blue-600');
+        });
 
         function showAlert(message, type) {
             const icons = {
@@ -259,40 +305,104 @@ if (isset($_SESSION['user_id'])) {
             spinner.classList.add('hidden');
         }
 
-        // Handle form submissions
-        [loginForm, registerForm].forEach(form => {
-            form.addEventListener('submit', async function(e) {
-                e.preventDefault();
-                showSpinner();
+        // Handle login form submission
+        loginForm.addEventListener('submit', async function(e) {
+            e.preventDefault();
+            showSpinner();
 
-                try {
-                    const response = await fetch(this.action, {
-                        method: 'POST',
-                        body: new FormData(this)
-                    });
+            try {
+                const response = await fetch(this.action, {
+                    method: 'POST',
+                    body: new FormData(this)
+                });
 
-                    const data = await response.json();
-                    hideSpinner();
+                const data = await response.json();
+                hideSpinner();
 
-                    showAlert(data.message, data.success ? 'success' : 'error');
-
-                    if (data.success && data.redirect) {
-                        // Disable form submission
-                        form.querySelector('button[type="submit"]').disabled = true;
-                        
-                        // Show loading state
-                        showSpinner();
-                        
-                        // Redirect after a short delay
-                        setTimeout(() => {
-                            window.location.href = data.redirect;
-                        }, 1500);
+                if (data.success) {
+                    showAlert(data.message, 'success');
+                    
+                    // Disable form submission
+                    this.querySelector('button[type="submit"]').disabled = true;
+                    
+                    // Show loading state
+                    showSpinner();
+                    
+                    // Redirect after a short delay
+                    setTimeout(() => {
+                        window.location.href = data.redirect;
+                    }, 1500);
+                } else {
+                    if (data.unverified) {
+                        // Show resend verification form
+                        loginForm.classList.add('hidden');
+                        resendVerificationForm.classList.remove('hidden');
+                        document.getElementById('resend-email').value = data.email;
+                        document.getElementById('verification-message').textContent = data.message;
+                    } else {
+                        showAlert(data.message, 'error');
                     }
-                } catch (error) {
-                    hideSpinner();
-                    showAlert('An error occurred. Please try again.', 'error');
                 }
-            });
+            } catch (error) {
+                hideSpinner();
+                showAlert('An error occurred. Please try again.', 'error');
+            }
+        });
+
+        // Handle register form submission
+        registerForm.addEventListener('submit', async function(e) {
+            e.preventDefault();
+            showSpinner();
+
+            try {
+                const response = await fetch(this.action, {
+                    method: 'POST',
+                    body: new FormData(this)
+                });
+
+                const data = await response.json();
+                hideSpinner();
+
+                showAlert(data.message, data.success ? 'success' : 'error');
+
+                if (data.success) {
+                    // Switch back to login tab after successful registration
+                    setTimeout(() => {
+                        switchTab(loginTab, loginForm, registerTab, registerForm);
+                    }, 1500);
+                }
+            } catch (error) {
+                hideSpinner();
+                showAlert('An error occurred. Please try again.', 'error');
+            }
+        });
+
+        // Handle resend verification form submission
+        resendVerificationForm.addEventListener('submit', async function(e) {
+            e.preventDefault();
+            showSpinner();
+
+            try {
+                const response = await fetch(this.action, {
+                    method: 'POST',
+                    body: new FormData(this)
+                });
+
+                const data = await response.json();
+                hideSpinner();
+
+                showAlert(data.message, data.success ? 'success' : 'error');
+
+                if (data.success) {
+                    // Switch back to login tab after successful resend
+                    setTimeout(() => {
+                        switchTab(loginTab, loginForm, registerTab, registerForm);
+                    }, 1500);
+                }
+            } catch (error) {
+                hideSpinner();
+                showAlert('An error occurred. Please try again.', 'error');
+            }
         });
     });
     </script>

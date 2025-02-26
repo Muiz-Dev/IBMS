@@ -59,8 +59,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $is_admin) {
                     
                     // Create user
                     $hashed_password = password_hash($password, PASSWORD_DEFAULT);
-                    $stmt = $conn->prepare("INSERT INTO users (full_name, email, password, role) VALUES (?, ?, ?, ?)");
-                    $stmt->bind_param("ssss", $full_name, $email, $hashed_password, $role);
+                    $verification_token = bin2hex(random_bytes(16));
+                    $stmt = $conn->prepare("INSERT INTO users (full_name, email, password, role, verification_token) VALUES (?, ?, ?, ?, ?)");
+                    $stmt->bind_param("sssss", $full_name, $email, $hashed_password, $role, $verification_token);
                     
                     if ($stmt->execute()) {
                         $new_user_id = $conn->insert_id;
@@ -71,15 +72,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $is_admin) {
                         $stmt->bind_param("is", $user_id, $action);
                         $stmt->execute();
                         
-                        // Send welcome email
-                        $to = $email;
-                        $subject = "Welcome to " . COMPANY_NAME;
-                        $message = "Hello $full_name,\n\nYour account has been created successfully.\n\nLogin Email: $email\nTemporary Password: $password\n\nPlease change your password after first login.\n\nBest regards,\n" . COMPANY_NAME;
-                        $headers = "From: " . COMPANY_EMAIL;
+                        // Send welcome email with verification link
+                        $verification_link = "http://" . $_SERVER['HTTP_HOST'] . "/verify.php?token=$verification_token";
+                        $subject = "Welcome to " . COMPANY_NAME . " - Verify Your Email";
+                        $body = "
+                            <html>
+                            <body>
+                                <h2>Welcome to " . COMPANY_NAME . "!</h2>
+                                <p>Hello $full_name,</p>
+                                <p>Your account has been created successfully.</p>
+                                <p><strong>Login Email:</strong> $email<br>
+                                <strong>Temporary Password:</strong> $password</p>
+                                <p>Please verify your email address by clicking the button below:</p>
+                                <p>
+                                    <a href='$verification_link' style='background-color: #4CAF50; border: none; color: white; padding: 15px 32px; text-align: center; text-decoration: none; display: inline-block; font-size: 16px; margin: 4px 2px; cursor: pointer;'>Verify Email</a>
+                                </p>
+                                <p>If the button doesn't work, you can copy and paste this link into your browser:</p>
+                                <p>$verification_link</p>
+                                <p>Please change your password after first login.</p>
+                                <p>Best regards,<br>" . COMPANY_NAME . "</p>
+                            </body>
+                            </html>
+                        ";
                         
-                        mail($to, $subject, $message, $headers);
-                        
-                        $message = "User created successfully";
+                        if (sendEmail($email, $subject, $body)) {
+                            $message = "User created successfully. A welcome email with verification link has been sent.";
+                        } else {
+                            $message = "User created successfully, but failed to send welcome email.";
+                        }
                         $message_type = "success";
                     } else {
                         throw new Exception("Failed to create user");
@@ -190,12 +210,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $is_admin) {
                         $user_info = $stmt->get_result()->fetch_assoc();
                         
                         // Send password reset email
-                        $to = $user_info['email'];
                         $subject = "Password Reset - " . COMPANY_NAME;
-                        $message = "Hello {$user_info['full_name']},\n\nYour password has been reset.\n\nTemporary Password: $temp_password\n\nPlease change your password after logging in.\n\nBest regards,\n" . COMPANY_NAME;
-                        $headers = "From: " . COMPANY_EMAIL;
+                        $body = "
+                            <html>
+                            <body>
+                                <h2>Password Reset</h2>
+                                <p>Hello {$user_info['full_name']},</p>
+                                <p>Your password has been reset by an administrator.</p>
+                                <p><strong>Temporary Password:</strong> $temp_password</p>
+                                <p>Please change your password after logging in.</p>
+                                <p>Best regards,<br>" . COMPANY_NAME . "</p>
+                            </body>
+                            </html>
+                        ";
                         
-                        mail($to, $subject, $message, $headers);
+                        if (sendEmail($user_info['email'], $subject, $body)) {
+                            $message = "Password reset successfully. A temporary password has been sent to the user's email.";
+                        } else {
+                            $message = "Password reset successfully, but failed to send email notification.";
+                        }
                         
                         // Log the action
                         $action = "Reset password for user: {$user_info['full_name']}";
@@ -203,10 +236,77 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $is_admin) {
                         $stmt->bind_param("is", $user_id, $action);
                         $stmt->execute();
                         
-                        $message = "Password reset successfully. A temporary password has been sent to the user's email.";
                         $message_type = "success";
                     } else {
                         throw new Exception("Failed to reset password");
+                    }
+                    $stmt->close();
+                    break;
+                    
+                case 'resend_verification':
+                    $user_id_to_verify = filter_var($_POST['user_id'], FILTER_VALIDATE_INT);
+                    
+                    if (!$user_id_to_verify) {
+                        throw new Exception("Invalid user ID");
+                    }
+                    
+                    // Get user info
+                    $stmt = $conn->prepare("SELECT email, full_name, email_verified FROM users WHERE id = ?");
+                    $stmt->bind_param("i", $user_id_to_verify);
+                    $stmt->execute();
+                    $user_info = $stmt->get_result()->fetch_assoc();
+                    $stmt->close();
+                    
+                    if (!$user_info) {
+                        throw new Exception("User not found");
+                    }
+                    
+                    if ($user_info['email_verified']) {
+                        throw new Exception("This user's email is already verified");
+                    }
+                    
+                    // Generate new verification token
+                    $verification_token = bin2hex(random_bytes(16));
+                    
+                    // Update user with new token
+                    $stmt = $conn->prepare("UPDATE users SET verification_token = ? WHERE id = ?");
+                    $stmt->bind_param("si", $verification_token, $user_id_to_verify);
+                    
+                    if ($stmt->execute()) {
+                        // Send verification email
+                        $verification_link = "http://" . $_SERVER['HTTP_HOST'] . "/verify.php?token=$verification_token";
+                        $subject = "Verify Your Email - " . COMPANY_NAME;
+                        $body = "
+                            <html>
+                            <body>
+                                <h2>Email Verification</h2>
+                                <p>Hello {$user_info['full_name']},</p>
+                                <p>Please click the button below to verify your email address:</p>
+                                <p>
+                                    <a href='$verification_link' style='background-color: #4CAF50; border: none; color: white; padding: 15px 32px; text-align: center; text-decoration: none; display: inline-block; font-size: 16px; margin: 4px 2px; cursor: pointer;'>Verify Email</a>
+                                </p>
+                                <p>If the button doesn't work, you can copy and paste this link into your browser:</p>
+                                <p>$verification_link</p>
+                                <p>Thank you,<br>" . COMPANY_NAME . "</p>
+                            </body>
+                            </html>
+                        ";
+                        
+                        if (sendEmail($user_info['email'], $subject, $body)) {
+                            $message = "Verification email has been resent to the user.";
+                        } else {
+                            $message = "Failed to send verification email. Please try again.";
+                        }
+                        
+                        // Log the action
+                        $action = "Resent verification email to user: {$user_info['full_name']}";
+                        $stmt = $conn->prepare("INSERT INTO activity_logs (user_id, action, created_at) VALUES (?, ?, NOW())");
+                        $stmt->bind_param("is", $user_id, $action);
+                        $stmt->execute();
+                        
+                        $message_type = "success";
+                    } else {
+                        throw new Exception("Failed to update verification token");
                     }
                     $stmt->close();
                     break;
@@ -322,6 +422,11 @@ $stmt->close();
                                                         </div>
                                                         <div class="text-sm text-gray-500">
                                                             <?php echo htmlspecialchars($user['email']); ?>
+                                                            <?php if (!$user['email_verified']): ?>
+                                                            <span class="ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
+                                                                Unverified
+                                                            </span>
+                                                            <?php endif; ?>
                                                         </div>
                                                     </div>
                                                 </div>
@@ -351,6 +456,10 @@ $stmt->close();
                                                     class="text-indigo-600 hover:text-indigo-900">Edit</button>
                                                 <button onclick="resetPassword(<?php echo $user['id']; ?>)"
                                                     class="ml-4 text-yellow-600 hover:text-yellow-900">Reset Password</button>
+                                                <?php if (!$user['email_verified']): ?>
+                                                <button onclick="resendVerification(<?php echo $user['id']; ?>)"
+                                                    class="ml-4 text-blue-600 hover:text-blue-900">Resend Verification</button>
+                                                <?php endif; ?>
                                                 <?php if ($user['id'] !== $current_user['id']): ?>
                                                 <button onclick="deleteUser(<?php echo $user['id']; ?>)"
                                                     class="ml-4 text-red-600 hover:text-red-900">Delete</button>
@@ -569,6 +678,19 @@ $stmt->close();
         }
     }
 
+    function resendVerification(userId) {
+        if (confirm('Are you sure you want to resend the verification email to this user?')) {
+            const form = document.createElement('form');
+            form.method = 'POST';
+            form.innerHTML = `
+                <input type="hidden" name="action" value="resend_verification">
+                <input type="hidden" name="user_id" value="${userId}">
+            `;
+            document.body.appendChild(form);
+            form.submit();
+        }
+    }
+
     function deleteUser(userId) {
         if (confirm('Are you sure you want to delete this user? This action cannot be undone.')) {
             const form = document.createElement('form');
@@ -607,4 +729,3 @@ $stmt->close();
     <script src="assets/js/nav.js"></script>
 </body>
 </html>
-
